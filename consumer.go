@@ -1,7 +1,7 @@
 package saramajetstream
 
 import (
-	"log"
+	"strings"
 
 	"github.com/Shopify/sarama"
 	"github.com/nats-io/nats.go"
@@ -14,17 +14,22 @@ var _ sarama.Consumer = (*JetStreamConsumer)(nil)
 var _ sarama.PartitionConsumer = (*partitionConsumer)(nil)
 
 type JetStreamConsumer struct {
-	js nats.JetStreamContext
+	js          nats.JetStreamContext
+	stripPrefix string
 }
 
+// NewJetStreamConsumer returns a sarama.Consumer
 // nolint: deadcode
-func NewJetStreamConsumer(js nats.JetStreamContext) sarama.Consumer {
-	return &JetStreamConsumer{js: js}
+func NewJetStreamConsumer(js nats.JetStreamContext, stripPrefix string) sarama.Consumer {
+	return &JetStreamConsumer{
+		js:          js,
+		stripPrefix: stripPrefix,
+	}
 }
 
 // ConsumePartition implements sarama.Consumer
 func (c JetStreamConsumer) ConsumePartition(topic string, partition int32, offset int64) (sarama.PartitionConsumer, error) {
-	log.Println("consuming", topic, "starting from offset", offset)
+	topic = strings.TrimPrefix(topic, c.stripPrefix)
 	return &partitionConsumer{
 		subject:  topic,
 		offset:   uint64(offset),

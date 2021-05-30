@@ -2,6 +2,7 @@ package saramajetstream
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Shopify/sarama"
 	"github.com/nats-io/nats.go"
@@ -11,12 +12,17 @@ import (
 var _ sarama.SyncProducer = (*JetStreamProducer)(nil)
 
 type JetStreamProducer struct {
-	js nats.JetStreamContext
+	js          nats.JetStreamContext
+	stripPrefix string
 }
 
+// NewJetStreamProducer returns a sarama.SyncProducer
 // nolint: deadcode
-func NewJetStreamProducer(js nats.JetStreamContext) sarama.SyncProducer {
-	return &JetStreamProducer{js: js}
+func NewJetStreamProducer(js nats.JetStreamContext, stripPrefix string) sarama.SyncProducer {
+	return &JetStreamProducer{
+		js:          js,
+		stripPrefix: stripPrefix,
+	}
 }
 
 // SendMessage implements sarama.SyncProducer
@@ -37,7 +43,7 @@ func (p *JetStreamProducer) SendMessage(msg *sarama.ProducerMessage) (partition 
 		}
 		return 0, -1, errors
 	}
-
+	msg.Topic = strings.TrimPrefix(msg.Topic, p.stripPrefix)
 	ack, err := p.js.Publish(msg.Topic, data)
 	if err != nil {
 		errors := sarama.ProducerErrors{
