@@ -79,11 +79,15 @@ type partitionConsumer struct {
 
 // AsyncClose implements sarama.PartitionConsumer
 func (pc *partitionConsumer) AsyncClose() {
+	close(pc.errors)
+	close(pc.messages)
 	_ = pc.sub.Unsubscribe()
 }
 
 // Close implements sarama.PartitionConsumer
 func (pc *partitionConsumer) Close() error {
+	close(pc.errors)
+	close(pc.messages)
 	return pc.sub.Unsubscribe()
 }
 
