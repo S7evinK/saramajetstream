@@ -13,13 +13,13 @@ var _ sarama.Consumer = (*JetStreamConsumer)(nil)
 // Ensure partitionConsumer implements sarama.PartitionConsumer
 var _ sarama.PartitionConsumer = (*partitionConsumer)(nil)
 
+// JetStreamConsumer implements sarama.Consumer
 type JetStreamConsumer struct {
 	js          nats.JetStreamContext
 	stripPrefix string
 }
 
 // NewJetStreamConsumer returns a sarama.Consumer
-// nolint: deadcode
 func NewJetStreamConsumer(js nats.JetStreamContext, stripPrefix string) sarama.Consumer {
 	return &JetStreamConsumer{
 		js:          js,
@@ -29,13 +29,24 @@ func NewJetStreamConsumer(js nats.JetStreamContext, stripPrefix string) sarama.C
 
 // ConsumePartition implements sarama.Consumer
 func (c JetStreamConsumer) ConsumePartition(topic string, partition int32, offset int64) (sarama.PartitionConsumer, error) {
-	topic = strings.TrimPrefix(topic, c.stripPrefix)
+	var opt nats.SubOpt
+
+	switch offset {
+	case sarama.OffsetNewest:
+		opt = nats.DeliverNew()
+	case sarama.OffsetOldest:
+		opt = nats.DeliverAll()
+	default:
+		opt = nats.StartSequence(uint64(offset))
+	}
+
 	return &partitionConsumer{
-		subject:  topic,
-		offset:   uint64(offset),
-		js:       c.js,
-		messages: make(chan *sarama.ConsumerMessage),
-		errors:   make(chan *sarama.ConsumerError),
+		subject:     strings.TrimPrefix(topic, c.stripPrefix),
+		stripPrefix: c.stripPrefix,
+		js:          c.js,
+		subOpt:      opt,
+		messages:    make(chan *sarama.ConsumerMessage),
+		errors:      make(chan *sarama.ConsumerError),
 	}, nil
 }
 
@@ -69,19 +80,18 @@ func (c *JetStreamConsumer) Close() error {
 }
 
 type partitionConsumer struct {
-	subject  string
-	offset   uint64
-	js       nats.JetStreamContext
-	sub      *nats.Subscription
-	messages chan *sarama.ConsumerMessage
-	errors   chan *sarama.ConsumerError
+	subject     string
+	stripPrefix string
+	js          nats.JetStreamContext
+	sub         *nats.Subscription
+	subOpt      nats.SubOpt
+	messages    chan *sarama.ConsumerMessage
+	errors      chan *sarama.ConsumerError
 }
 
 // AsyncClose implements sarama.PartitionConsumer
 func (pc *partitionConsumer) AsyncClose() {
-	close(pc.errors)
-	close(pc.messages)
-	_ = pc.sub.Unsubscribe()
+	_ = pc.Close()
 }
 
 // Close implements sarama.PartitionConsumer
@@ -112,8 +122,7 @@ func (pc *partitionConsumer) Messages() <-chan *sarama.ConsumerMessage {
 			Partition:      0,
 			Offset:         int64(meta.Sequence.Consumer),
 		}
-		pc.offset++
-	}, nats.StartSequence(pc.offset), nats.Durable(pc.subject))
+	}, nats.Durable(pc.subject), pc.subOpt)
 	if err != nil {
 		pc.errors <- &sarama.ConsumerError{
 			Err:   err,
@@ -131,5 +140,9 @@ func (pc *partitionConsumer) Errors() <-chan *sarama.ConsumerError {
 
 // HighWaterMarkOffset implements sarama.PartitionConsumer
 func (pc *partitionConsumer) HighWaterMarkOffset() int64 {
-	return int64(pc.offset + 1)
+	i, err := pc.js.StreamInfo(pc.stripPrefix + pc.subject)
+	if err != nil {
+		return 1
+	}
+	return int64(i.State.LastSeq + 1)
 }

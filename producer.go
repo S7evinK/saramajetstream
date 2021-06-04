@@ -11,13 +11,13 @@ import (
 // Ensure JetStreamProducer implements sarama.SyncProducer
 var _ sarama.SyncProducer = (*JetStreamProducer)(nil)
 
+// JetStreamProducer implements sarama.SyncProducer
 type JetStreamProducer struct {
 	js          nats.JetStreamContext
 	stripPrefix string
 }
 
 // NewJetStreamProducer returns a sarama.SyncProducer
-// nolint: deadcode
 func NewJetStreamProducer(js nats.JetStreamContext, stripPrefix string) sarama.SyncProducer {
 	return &JetStreamProducer{
 		js:          js,
