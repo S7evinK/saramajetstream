@@ -17,7 +17,6 @@ type JetStreamProducer struct {
 }
 
 // NewJetStreamProducer returns a sarama.SyncProducer
-// nolint: deadcode
 func NewJetStreamProducer(js nats.JetStreamContext, stripPrefix string) sarama.SyncProducer {
 	return &JetStreamProducer{
 		js:          js,
