@@ -74,6 +74,9 @@ func TestJetStreamProducer_SendMessages(t *testing.T) {
 				t.Errorf("SendMessages() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
+			if err := p.Close(); err != nil {
+				t.Error(err)
+			}
 		})
 	}
 }
@@ -144,6 +147,9 @@ func TestJetStreamProducer_SendMessage(t *testing.T) {
 			}
 			if gotOffset != tt.wantOffset {
 				t.Errorf("SendMessage() gotOffset = %v, want %v", gotOffset, tt.wantOffset)
+			}
+			if err := p.Close(); err != nil {
+				t.Error(err)
 			}
 		})
 	}
