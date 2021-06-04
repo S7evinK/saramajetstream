@@ -11,6 +11,7 @@ import (
 // Ensure JetStreamProducer implements sarama.SyncProducer
 var _ sarama.SyncProducer = (*JetStreamProducer)(nil)
 
+// JetStreamProducer implements sarama.SyncProducer
 type JetStreamProducer struct {
 	js          nats.JetStreamContext
 	stripPrefix string

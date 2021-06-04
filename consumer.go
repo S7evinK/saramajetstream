@@ -13,6 +13,7 @@ var _ sarama.Consumer = (*JetStreamConsumer)(nil)
 // Ensure partitionConsumer implements sarama.PartitionConsumer
 var _ sarama.PartitionConsumer = (*partitionConsumer)(nil)
 
+// JetStreamConsumer implements sarama.Consumer
 type JetStreamConsumer struct {
 	js          nats.JetStreamContext
 	stripPrefix string
