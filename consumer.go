@@ -122,7 +122,7 @@ func (pc *partitionConsumer) Messages() <-chan *sarama.ConsumerMessage {
 			Partition:      0,
 			Offset:         int64(meta.Sequence.Consumer),
 		}
-	}, nats.Durable(pc.subject), pc.subOpt)
+	}, pc.subOpt)
 	if err != nil {
 		pc.errors <- &sarama.ConsumerError{
 			Err:   err,
