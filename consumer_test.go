@@ -97,7 +97,9 @@ func TestJetStreamConsumer_PartitionConsumer(t *testing.T) {
 	}
 	producer := sjs.NewJetStreamProducer(js, "")
 
-	pc, err := consumer.ConsumePartition("test", 0, sarama.OffsetNewest)
+	hwm := consumer.HighWaterMarks()
+
+	pc, err := consumer.ConsumePartition("test", 0, hwm["test"][0])
 	if err != nil {
 		t.Errorf("unable to consume partition: %+v", err)
 	}
@@ -117,8 +119,7 @@ func TestJetStreamConsumer_PartitionConsumer(t *testing.T) {
 		t.Fatalf(`expected message to be "%s" but got "%s"`, want, msg.Value)
 	}
 
-	// TODO: Fix failing test
-	if msg.Offset != offset {
+	if msg.Offset != offset || msg.Offset != hwm["test"][0] {
 		t.Fatalf("unexpected offset, got %d, want %d", msg.Offset, offset)
 	}
 

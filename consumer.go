@@ -120,7 +120,7 @@ func (pc *partitionConsumer) Messages() <-chan *sarama.ConsumerMessage {
 			Value:          msg.Data,
 			Topic:          pc.subject,
 			Partition:      0,
-			Offset:         int64(meta.Sequence.Consumer),
+			Offset:         int64(meta.Sequence.Stream),
 		}
 	}, pc.subOpt)
 	if err != nil {
