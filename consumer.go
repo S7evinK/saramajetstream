@@ -40,14 +40,35 @@ func (c JetStreamConsumer) ConsumePartition(topic string, partition int32, offse
 		opt = nats.StartSequence(uint64(offset))
 	}
 
-	return &partitionConsumer{
+	pc := &partitionConsumer{
 		subject:     strings.TrimPrefix(topic, c.stripPrefix),
 		stripPrefix: c.stripPrefix,
 		js:          c.js,
-		subOpt:      opt,
 		messages:    make(chan *sarama.ConsumerMessage),
 		errors:      make(chan *sarama.ConsumerError),
-	}, nil
+	}
+
+	var err error
+	pc.sub, err = pc.js.Subscribe(pc.subject, func(msg *nats.Msg) {
+		meta, err := msg.Metadata()
+		if err != nil {
+			pc.errors <- &sarama.ConsumerError{
+				Err:   err,
+				Topic: pc.subject,
+			}
+			return
+		}
+		pc.messages <- &sarama.ConsumerMessage{
+			Timestamp:      meta.Timestamp,
+			BlockTimestamp: meta.Timestamp,
+			Key:            []byte{},
+			Value:          msg.Data,
+			Topic:          pc.subject,
+			Partition:      0,
+			Offset:         int64(meta.Sequence.Stream),
+		}
+	}, opt)
+	return pc, err
 }
 
 // Topics implements sarama.Consumer
@@ -84,7 +105,6 @@ type partitionConsumer struct {
 	stripPrefix string
 	js          nats.JetStreamContext
 	sub         *nats.Subscription
-	subOpt      nats.SubOpt
 	messages    chan *sarama.ConsumerMessage
 	errors      chan *sarama.ConsumerError
 }
@@ -103,33 +123,6 @@ func (pc *partitionConsumer) Close() error {
 
 // Messages implements sarama.PartitionConsumer
 func (pc *partitionConsumer) Messages() <-chan *sarama.ConsumerMessage {
-	var err error
-	pc.sub, err = pc.js.Subscribe(pc.subject, func(msg *nats.Msg) {
-		meta, err := msg.Metadata()
-		if err != nil {
-			pc.errors <- &sarama.ConsumerError{
-				Err:   err,
-				Topic: pc.subject,
-			}
-			return
-		}
-		pc.messages <- &sarama.ConsumerMessage{
-			Timestamp:      meta.Timestamp,
-			BlockTimestamp: meta.Timestamp,
-			Key:            []byte{},
-			Value:          msg.Data,
-			Topic:          pc.subject,
-			Partition:      0,
-			Offset:         int64(meta.Sequence.Stream),
-		}
-	}, pc.subOpt)
-	if err != nil {
-		pc.errors <- &sarama.ConsumerError{
-			Err:   err,
-			Topic: pc.subject,
-		}
-	}
-
 	return pc.messages
 }
 
