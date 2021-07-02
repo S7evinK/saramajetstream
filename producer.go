@@ -28,6 +28,7 @@ func NewJetStreamProducer(js nats.JetStreamContext, stripPrefix string) sarama.S
 // SendMessage implements sarama.SyncProducer
 func (p *JetStreamProducer) SendMessage(msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
 	var data []byte
+	msg.Topic = strings.TrimPrefix(msg.Topic, p.stripPrefix)
 
 	switch val := msg.Value.(type) {
 	case sarama.ByteEncoder:
@@ -35,37 +36,36 @@ func (p *JetStreamProducer) SendMessage(msg *sarama.ProducerMessage) (partition 
 	case sarama.StringEncoder:
 		data = []byte(val)
 	default:
-		errors := sarama.ProducerErrors{
-			&sarama.ProducerError{
-				Msg: msg,
-				Err: fmt.Errorf("unknown encoding: %T", msg.Value),
-			},
+		pErr := &sarama.ProducerError{
+			Msg: msg,
+			Err: fmt.Errorf("unknown encoding: %T", msg.Value),
 		}
-		return 0, -1, errors
+		return 0, -1, pErr
 	}
-	msg.Topic = strings.TrimPrefix(msg.Topic, p.stripPrefix)
 	ack, err := p.js.Publish(msg.Topic, data)
 	if err != nil {
-		errors := sarama.ProducerErrors{
-			&sarama.ProducerError{
-				Msg: msg,
-				Err: err,
-			},
+		pErr := &sarama.ProducerError{
+			Msg: msg,
+			Err: err,
 		}
-		return 0, -1, errors
+		return 0, -1, pErr
 	}
 	return 0, int64(ack.Sequence), nil
 }
 
 // SendMessages implements sarama.SyncProducer
 func (p *JetStreamProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
+	errors := sarama.ProducerErrors{}
 	for _, msg := range msgs {
 		_, _, err := p.SendMessage(msg)
 		if err != nil {
-			return err
+			errors = append(errors, err.(*sarama.ProducerError))
 		}
 	}
-	return nil
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 // Close implements sarama.SyncProducer

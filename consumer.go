@@ -1,6 +1,7 @@
 package saramajetstream
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/Shopify/sarama"
@@ -29,14 +30,20 @@ func NewJetStreamConsumer(js nats.JetStreamContext, stripPrefix string) sarama.C
 
 // ConsumePartition implements sarama.Consumer
 func (c JetStreamConsumer) ConsumePartition(topic string, partition int32, offset int64) (sarama.PartitionConsumer, error) {
-	var opt nats.SubOpt
+	if partition != 0 {
+		return nil, fmt.Errorf("unknown partition %d", partition)
+	}
 
+	var opt nats.SubOpt
 	switch offset {
 	case sarama.OffsetNewest:
 		opt = nats.DeliverNew()
 	case sarama.OffsetOldest:
 		opt = nats.DeliverAll()
 	default:
+		if offset <= 0 {
+			return nil, fmt.Errorf("offset should be greater 0")
+		}
 		opt = nats.StartSequence(uint64(offset))
 	}
 
@@ -50,10 +57,10 @@ func (c JetStreamConsumer) ConsumePartition(topic string, partition int32, offse
 
 	var err error
 	pc.sub, err = pc.js.Subscribe(pc.subject, func(msg *nats.Msg) {
-		meta, err := msg.Metadata()
-		if err != nil {
+		meta, merr := msg.Metadata()
+		if merr != nil {
 			pc.errors <- &sarama.ConsumerError{
-				Err:   err,
+				Err:   merr,
 				Topic: pc.subject,
 			}
 			return
