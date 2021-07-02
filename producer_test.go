@@ -1,6 +1,7 @@
 package saramajetstream_test
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -14,20 +15,21 @@ import (
 func startServer(t *testing.T) *server.Server {
 	t.Helper()
 	opts := &natsserver.DefaultTestOptions
+	opts.Port = -1
 	opts.JetStream = true
 	return natsserver.RunServer(opts)
 }
 
-func connectServer(t *testing.T) nats.JetStreamContext {
+func connectServer(t *testing.T, url string) nats.JetStreamContext {
 	t.Helper()
-	nc, err := nats.Connect(nats.DefaultURL)
+	nc, err := nats.Connect(url)
 	if err != nil {
-		t.Errorf("unable to connect to nats: %+v", err)
+		t.Fatalf("unable to connect to nats: %+v", err)
 	}
 
 	js, err := nc.JetStream()
 	if err != nil {
-		t.Errorf("unable to get JetStream context: %+v", err)
+		t.Fatalf("unable to get JetStream context: %+v", err)
 	}
 
 	_, err = js.AddStream(&nats.StreamConfig{
@@ -35,15 +37,28 @@ func connectServer(t *testing.T) nats.JetStreamContext {
 		Subjects: []string{"*"},
 	})
 	if err != nil {
-		t.Errorf("unable to add stream: %+v", err)
+		t.Fatalf("unable to add stream: %+v", err)
 	}
 	return js
 }
 
+func cleanup(t *testing.T, s *server.Server) func() {
+	return func() {
+		t.Helper()
+		s.Shutdown()
+		if config := s.JetStreamConfig(); config != nil {
+			if err := os.RemoveAll(config.StoreDir); err != nil {
+				t.Fatal("unable to cleanup StoreDir", config.StoreDir)
+			}
+		}
+	}
+}
+
 func TestJetStreamProducer_SendMessages(t *testing.T) {
 	s := startServer(t)
-	defer s.Shutdown()
-	js := connectServer(t)
+	t.Cleanup(cleanup(t, s))
+
+	js := connectServer(t, s.ClientURL())
 
 	tests := []struct {
 		name    string
@@ -71,7 +86,7 @@ func TestJetStreamProducer_SendMessages(t *testing.T) {
 			p := sjs.NewJetStreamProducer(js, "")
 			err := p.SendMessages(tt.msgs)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("SendMessages() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("SendMessages() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if err := p.Close(); err != nil {
@@ -93,12 +108,13 @@ func (s dummyEncoder) Length() int {
 
 func TestJetStreamProducer_SendMessage(t *testing.T) {
 	s := startServer(t)
-	defer s.Shutdown()
-	js := connectServer(t)
+	t.Cleanup(cleanup(t, s))
+
+	js := connectServer(t, s.ClientURL())
 
 	i, err := js.StreamInfo("test")
 	if err != nil {
-		t.Errorf("unable to get stream info: %+v", err)
+		t.Fatalf("unable to get stream info: %+v", err)
 	}
 
 	tests := []struct {
@@ -139,14 +155,14 @@ func TestJetStreamProducer_SendMessage(t *testing.T) {
 			p := sjs.NewJetStreamProducer(js, "")
 			gotPartition, gotOffset, err := p.SendMessage(tt.msg)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("SendMessage() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("SendMessage() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if gotPartition != tt.wantPartition {
-				t.Errorf("SendMessage() gotPartition = %v, want %v", gotPartition, tt.wantPartition)
+				t.Fatalf("SendMessage() gotPartition = %v, want %v", gotPartition, tt.wantPartition)
 			}
 			if gotOffset != tt.wantOffset {
-				t.Errorf("SendMessage() gotOffset = %v, want %v", gotOffset, tt.wantOffset)
+				t.Fatalf("SendMessage() gotOffset = %v, want %v", gotOffset, tt.wantOffset)
 			}
 			if err := p.Close(); err != nil {
 				t.Error(err)
