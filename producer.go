@@ -40,11 +40,11 @@ func (p *JetStreamProducer) SendMessage(msg *sarama.ProducerMessage) (partition 
 	nMsg.Data = data
 
 	if msg.Key != nil {
-		key, err := msg.Key.Encode()
-		if err != nil {
+		key, kErr := msg.Key.Encode()
+		if kErr != nil {
 			return 0, -1, &sarama.ProducerError{
 				Msg: msg,
-				Err: err,
+				Err: kErr,
 			}
 		}
 		// set header MsgHeaderKey to the sarama.ProducerMessage.Key

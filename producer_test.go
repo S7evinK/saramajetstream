@@ -98,16 +98,6 @@ func TestJetStreamProducer_SendMessages(t *testing.T) {
 	}
 }
 
-type dummyEncoder string
-
-func (s dummyEncoder) Encode() ([]byte, error) {
-	return []byte(s), nil
-}
-
-func (s dummyEncoder) Length() int {
-	return len(s)
-}
-
 func TestJetStreamProducer_SendMessage(t *testing.T) {
 	s := startServer(t)
 	t.Cleanup(cleanup(t, s))
