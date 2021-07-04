@@ -1,7 +1,6 @@
 package saramajetstream
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/Shopify/sarama"
@@ -30,24 +29,15 @@ func NewJetStreamProducer(js nats.JetStreamContext, stripPrefix string) sarama.S
 
 // SendMessage implements sarama.SyncProducer
 func (p *JetStreamProducer) SendMessage(msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
-	var data []byte
 	msg.Topic = strings.TrimPrefix(msg.Topic, p.stripPrefix)
 
-	switch val := msg.Value.(type) {
-	case sarama.ByteEncoder:
-		data = val
-	case sarama.StringEncoder:
-		data = []byte(val)
-	default:
-		pErr := &sarama.ProducerError{
-			Msg: msg,
-			Err: fmt.Errorf("unknown encoding: %T", msg.Value),
-		}
-		return 0, -1, pErr
+	data, err := msg.Value.Encode()
+	if err != nil {
+		return 0, -1, err
 	}
 
 	if msg.Key != nil {
-		key, err := getMessageKey(msg.Key)
+		key, err := msg.Key.Encode()
 		if err != nil {
 			return 0, -1, &sarama.ProducerError{
 				Msg: msg,
@@ -70,19 +60,6 @@ func (p *JetStreamProducer) SendMessage(msg *sarama.ProducerMessage) (partition 
 		return 0, -1, pErr
 	}
 	return 0, int64(ack.Sequence), nil
-}
-
-func getMessageKey(input sarama.Encoder) ([]byte, error) {
-	var data []byte
-	switch val := input.(type) {
-	case sarama.ByteEncoder:
-		data = val
-	case sarama.StringEncoder:
-		data = []byte(val)
-	default:
-		return nil, fmt.Errorf("unknown encoding: %T", val)
-	}
-	return data, nil
 }
 
 // SendMessages implements sarama.SyncProducer

@@ -144,26 +144,6 @@ func TestJetStreamProducer_SendMessage(t *testing.T) {
 			},
 			wantOffset: int64(i.State.LastSeq + 2),
 		},
-		{
-			name: "unknown value encoder",
-			msg: &sarama.ProducerMessage{
-				Key:   sarama.StringEncoder("test"),
-				Topic: "test",
-				Value: dummyEncoder("testing"),
-			},
-			wantErr:    true,
-			wantOffset: -1,
-		},
-		{
-			name: "unknown key encoder",
-			msg: &sarama.ProducerMessage{
-				Key:   dummyEncoder("testing"),
-				Topic: "test",
-				Value: sarama.StringEncoder("test"),
-			},
-			wantErr:    true,
-			wantOffset: -1,
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
