@@ -69,6 +69,7 @@ func (c *JetStreamConsumer) ConsumePartition(topic string, partition int32, offs
 			return
 		}
 		pc.messages <- &sarama.ConsumerMessage{
+			Headers:        toSaramaRecordHeader(msg.Header),
 			Timestamp:      meta.Timestamp,
 			BlockTimestamp: meta.Timestamp,
 			Key:            []byte(msg.Header.Get(MsgHeaderKey)),

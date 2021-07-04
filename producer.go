@@ -8,7 +8,7 @@ import (
 )
 
 // MsgHeaderKey is the header used as the sarama.ConsumerMessage.Key
-const MsgHeaderKey = "KEY"
+const MsgHeaderKey = "$_SARAMA_NATS_KEY"
 
 // Ensure JetStreamProducer implements sarama.SyncProducer
 var _ sarama.SyncProducer = (*JetStreamProducer)(nil)
@@ -29,12 +29,15 @@ func NewJetStreamProducer(js nats.JetStreamContext, stripPrefix string) sarama.S
 
 // SendMessage implements sarama.SyncProducer
 func (p *JetStreamProducer) SendMessage(msg *sarama.ProducerMessage) (partition int32, offset int64, err error) {
-	msg.Topic = strings.TrimPrefix(msg.Topic, p.stripPrefix)
-
 	data, err := msg.Value.Encode()
 	if err != nil {
 		return 0, -1, err
 	}
+
+	// create a new message to use headers
+	nMsg := nats.NewMsg(strings.TrimPrefix(msg.Topic, p.stripPrefix))
+	nMsg.Header = toNATSHeader(msg.Headers)
+	nMsg.Data = data
 
 	if msg.Key != nil {
 		key, err := msg.Key.Encode()
@@ -44,14 +47,11 @@ func (p *JetStreamProducer) SendMessage(msg *sarama.ProducerMessage) (partition 
 				Err: err,
 			}
 		}
-		// add a header with the given msg.Key
-		msg.Headers = append(msg.Headers, sarama.RecordHeader{
-			Key:   []byte(MsgHeaderKey),
-			Value: key,
-		})
+		// set header MsgHeaderKey to the sarama.ProducerMessage.Key
+		nMsg.Header.Set(MsgHeaderKey, string(key))
 	}
 
-	ack, err := p.js.Publish(msg.Topic, data)
+	ack, err := p.js.PublishMsg(nMsg)
 	if err != nil {
 		pErr := &sarama.ProducerError{
 			Msg: msg,
@@ -80,4 +80,27 @@ func (p *JetStreamProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
 // Close implements sarama.SyncProducer
 func (p *JetStreamProducer) Close() error {
 	return nil
+}
+
+// convert sarama.RecordHeader to nats.Header
+func toNATSHeader(headers []sarama.RecordHeader) nats.Header {
+	result := make(nats.Header)
+	for _, header := range headers {
+		result[string(header.Key)] = []string{string(header.Value)}
+	}
+	return result
+}
+
+// convert nats.Header to sarama.RecordHeader
+func toSaramaRecordHeader(headers nats.Header) []*sarama.RecordHeader {
+	result := make([]*sarama.RecordHeader, len(headers))
+	i := 0
+	for key, value := range headers {
+		result[i] = &sarama.RecordHeader{
+			Key:   []byte(key),
+			Value: []byte(value[0]),
+		}
+		i++
+	}
+	return result
 }
