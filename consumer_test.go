@@ -146,3 +146,25 @@ func TestJetStreamConsumer_PartitionConsumer(t *testing.T) {
 		t.Fatalf("unexpected offset, got %d, want %d", msg.Offset, offset)
 	}
 }
+
+func TestJetStreamConsumer_Close(t *testing.T) {
+	s := startServer(t)
+	t.Cleanup(cleanup(t, s))
+
+	js := connectServer(t, s.ClientURL())
+
+	consumer := sjs.NewJetStreamConsumer(js, "")
+	if consumer == nil {
+		t.Fatalf("expected consumer to be not nil")
+	}
+
+	_, err := consumer.ConsumePartition("test", 0, sarama.OffsetNewest)
+	if err != nil {
+		t.Fatalf("unable to consume partition: %+v", err)
+	}
+	t.Cleanup(func() {
+		if err := consumer.Close(); err != nil {
+			t.Fatalf("unable to close consumer: %+v", err)
+		}
+	})
+}

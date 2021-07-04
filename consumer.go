@@ -16,8 +16,9 @@ var _ sarama.PartitionConsumer = (*partitionConsumer)(nil)
 
 // JetStreamConsumer implements sarama.Consumer
 type JetStreamConsumer struct {
-	js          nats.JetStreamContext
-	stripPrefix string
+	js                 nats.JetStreamContext
+	stripPrefix        string
+	partitionConsumers []*partitionConsumer
 }
 
 // NewJetStreamConsumer returns a sarama.Consumer
@@ -29,7 +30,7 @@ func NewJetStreamConsumer(js nats.JetStreamContext, stripPrefix string) sarama.C
 }
 
 // ConsumePartition implements sarama.Consumer
-func (c JetStreamConsumer) ConsumePartition(topic string, partition int32, offset int64) (sarama.PartitionConsumer, error) {
+func (c *JetStreamConsumer) ConsumePartition(topic string, partition int32, offset int64) (sarama.PartitionConsumer, error) {
 	if partition != 0 {
 		return nil, fmt.Errorf("unknown partition %d", partition)
 	}
@@ -54,6 +55,8 @@ func (c JetStreamConsumer) ConsumePartition(topic string, partition int32, offse
 		messages:    make(chan *sarama.ConsumerMessage),
 		errors:      make(chan *sarama.ConsumerError),
 	}
+
+	c.partitionConsumers = append(c.partitionConsumers, pc)
 
 	var err error
 	pc.sub, err = pc.js.Subscribe(pc.subject, func(msg *nats.Msg) {
@@ -104,6 +107,11 @@ func (c *JetStreamConsumer) HighWaterMarks() map[string]map[int32]int64 {
 
 // Close implements sarama.Consumer
 func (c *JetStreamConsumer) Close() error {
+	for _, pc := range c.partitionConsumers {
+		if err := pc.Close(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
