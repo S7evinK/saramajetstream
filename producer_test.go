@@ -69,11 +69,13 @@ func TestJetStreamProducer_SendMessages(t *testing.T) {
 			name: "send multiple messages",
 			msgs: []*sarama.ProducerMessage{
 				{
+					Key:       sarama.StringEncoder("test"),
 					Topic:     "test",
 					Value:     sarama.StringEncoder("hello world"),
 					Timestamp: time.Now(),
 				},
 				{
+					Key:       sarama.StringEncoder("test"),
 					Topic:     "test1",
 					Value:     sarama.StringEncoder("hello world2"),
 					Timestamp: time.Now(),
@@ -127,6 +129,7 @@ func TestJetStreamProducer_SendMessage(t *testing.T) {
 		{
 			name: "string message",
 			msg: &sarama.ProducerMessage{
+				Key:   sarama.StringEncoder("test"),
 				Topic: "test",
 				Value: sarama.StringEncoder("hello world"),
 			},
@@ -135,16 +138,28 @@ func TestJetStreamProducer_SendMessage(t *testing.T) {
 		{
 			name: "byte message",
 			msg: &sarama.ProducerMessage{
+				Key:   sarama.StringEncoder("test"),
 				Topic: "test",
 				Value: sarama.ByteEncoder("hello world"),
 			},
 			wantOffset: int64(i.State.LastSeq + 2),
 		},
 		{
-			name: "unknown encoder",
+			name: "unknown value encoder",
 			msg: &sarama.ProducerMessage{
+				Key:   sarama.StringEncoder("test"),
 				Topic: "test",
 				Value: dummyEncoder("testing"),
+			},
+			wantErr:    true,
+			wantOffset: -1,
+		},
+		{
+			name: "unknown key encoder",
+			msg: &sarama.ProducerMessage{
+				Key:   dummyEncoder("testing"),
+				Topic: "test",
+				Value: sarama.StringEncoder("test"),
 			},
 			wantErr:    true,
 			wantOffset: -1,

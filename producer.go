@@ -8,6 +8,9 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
+// MsgHeaderKey is the header used as the sarama.ConsumerMessage.Key
+const MsgHeaderKey = "KEY"
+
 // Ensure JetStreamProducer implements sarama.SyncProducer
 var _ sarama.SyncProducer = (*JetStreamProducer)(nil)
 
@@ -42,6 +45,22 @@ func (p *JetStreamProducer) SendMessage(msg *sarama.ProducerMessage) (partition 
 		}
 		return 0, -1, pErr
 	}
+
+	if msg.Key != nil {
+		key, err := getMessageKey(msg.Key)
+		if err != nil {
+			return 0, -1, &sarama.ProducerError{
+				Msg: msg,
+				Err: err,
+			}
+		}
+		// add a header with the given msg.Key
+		msg.Headers = append(msg.Headers, sarama.RecordHeader{
+			Key:   []byte(MsgHeaderKey),
+			Value: key,
+		})
+	}
+
 	ack, err := p.js.Publish(msg.Topic, data)
 	if err != nil {
 		pErr := &sarama.ProducerError{
@@ -51,6 +70,19 @@ func (p *JetStreamProducer) SendMessage(msg *sarama.ProducerMessage) (partition 
 		return 0, -1, pErr
 	}
 	return 0, int64(ack.Sequence), nil
+}
+
+func getMessageKey(input sarama.Encoder) ([]byte, error) {
+	var data []byte
+	switch val := input.(type) {
+	case sarama.ByteEncoder:
+		data = val
+	case sarama.StringEncoder:
+		data = []byte(val)
+	default:
+		return nil, fmt.Errorf("unknown encoding: %T", val)
+	}
+	return data, nil
 }
 
 // SendMessages implements sarama.SyncProducer

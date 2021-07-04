@@ -111,6 +111,21 @@ func TestJetStreamConsumer_PartitionConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to consume partition: %+v", err)
 	}
+	go func() {
+		if pcErr := <-pc.Errors(); pcErr != nil {
+			t.Errorf("unexpected error: %+v", pcErr)
+			return
+		}
+	}()
+
+	t.Cleanup(func() {
+		pc.AsyncClose()
+	})
+
+	pcHwm := pc.HighWaterMarkOffset()
+	if pcHwm != hwm["test"][0] {
+		t.Fatalf("expected PartitionConsumer HighWaterMarkOffset (%d) to equal HighWatermarks (%d)", pcHwm, hwm["test"][0])
+	}
 
 	_, offset, err := producer.SendMessage(&sarama.ProducerMessage{
 		Topic:     "test",
@@ -129,9 +144,5 @@ func TestJetStreamConsumer_PartitionConsumer(t *testing.T) {
 
 	if msg.Offset != offset || msg.Offset != hwm["test"][0] {
 		t.Fatalf("unexpected offset, got %d, want %d", msg.Offset, offset)
-	}
-
-	if err := pc.Close(); err != nil {
-		t.Fatalf("unable to close PartitionConsumer: %+v", err)
 	}
 }
