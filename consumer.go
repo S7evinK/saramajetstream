@@ -49,17 +49,15 @@ func (c *JetStreamConsumer) ConsumePartition(topic string, partition int32, offs
 	}
 
 	pc := &partitionConsumer{
-		subject:     strings.TrimPrefix(topic, c.stripPrefix),
-		stripPrefix: c.stripPrefix,
-		js:          c.js,
-		messages:    make(chan *sarama.ConsumerMessage),
-		errors:      make(chan *sarama.ConsumerError),
+		subject:  strings.TrimPrefix(topic, c.stripPrefix),
+		messages: make(chan *sarama.ConsumerMessage),
+		errors:   make(chan *sarama.ConsumerError),
 	}
 
 	c.partitionConsumers = append(c.partitionConsumers, pc)
 
 	var err error
-	pc.sub, err = pc.js.Subscribe(pc.subject, func(msg *nats.Msg) {
+	pc.sub, err = c.js.Subscribe(pc.subject, func(msg *nats.Msg) {
 		meta, merr := msg.Metadata()
 		if merr != nil {
 			pc.errors <- &sarama.ConsumerError{
@@ -117,12 +115,10 @@ func (c *JetStreamConsumer) Close() error {
 }
 
 type partitionConsumer struct {
-	subject     string
-	stripPrefix string
-	js          nats.JetStreamContext
-	sub         *nats.Subscription
-	messages    chan *sarama.ConsumerMessage
-	errors      chan *sarama.ConsumerError
+	subject  string
+	sub      *nats.Subscription
+	messages chan *sarama.ConsumerMessage
+	errors   chan *sarama.ConsumerError
 }
 
 // AsyncClose implements sarama.PartitionConsumer
@@ -149,9 +145,9 @@ func (pc *partitionConsumer) Errors() <-chan *sarama.ConsumerError {
 
 // HighWaterMarkOffset implements sarama.PartitionConsumer
 func (pc *partitionConsumer) HighWaterMarkOffset() int64 {
-	i, err := pc.js.StreamInfo(pc.stripPrefix + pc.subject)
+	ci, err := pc.sub.ConsumerInfo()
 	if err != nil {
 		return 1
 	}
-	return int64(i.State.LastSeq + 1)
+	return int64(ci.Delivered.Stream + 1)
 }
