@@ -17,10 +17,9 @@ var _ sarama.PartitionConsumer = (*partitionConsumer)(nil)
 
 // JetStreamConsumer implements sarama.Consumer
 type JetStreamConsumer struct {
-	js                 nats.JetStreamContext
-	nats               *nats.Conn
-	stripPrefix        string
-	partitionConsumers []*partitionConsumer
+	js          nats.JetStreamContext
+	nats        *nats.Conn
+	stripPrefix string
 }
 
 // NewJetStreamConsumer returns a sarama.Consumer
@@ -57,8 +56,6 @@ func (c *JetStreamConsumer) ConsumePartition(topic string, partition int32, offs
 		errors:   make(chan *sarama.ConsumerError),
 		once:     &sync.Once{},
 	}
-
-	c.partitionConsumers = append(c.partitionConsumers, pc)
 
 	var err error
 	pc.sub, err = c.js.Subscribe(pc.subject, func(msg *nats.Msg) {
