@@ -22,6 +22,9 @@ type JetStreamConsumer struct {
 	stripPrefix string
 }
 
+// channelSize defines the buffer size for the messages/errors channels
+const channelSize = 1024
+
 // NewJetStreamConsumer returns a sarama.Consumer
 func NewJetStreamConsumer(nc *nats.Conn, js nats.JetStreamContext, stripPrefix string) sarama.Consumer {
 	return &JetStreamConsumer{
@@ -52,8 +55,8 @@ func (c *JetStreamConsumer) ConsumePartition(topic string, partition int32, offs
 
 	pc := &partitionConsumer{
 		subject:  strings.TrimPrefix(topic, c.stripPrefix),
-		messages: make(chan *sarama.ConsumerMessage),
-		errors:   make(chan *sarama.ConsumerError),
+		messages: make(chan *sarama.ConsumerMessage, channelSize),
+		errors:   make(chan *sarama.ConsumerError, channelSize),
 		once:     &sync.Once{},
 	}
 
