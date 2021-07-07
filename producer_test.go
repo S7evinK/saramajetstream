@@ -20,7 +20,7 @@ func startServer(t *testing.T) *server.Server {
 	return natsserver.RunServer(opts)
 }
 
-func connectServer(t *testing.T, url string) nats.JetStreamContext {
+func connectServer(t *testing.T, url string) (*nats.Conn, nats.JetStreamContext) {
 	t.Helper()
 	nc, err := nats.Connect(url)
 	if err != nil {
@@ -39,12 +39,13 @@ func connectServer(t *testing.T, url string) nats.JetStreamContext {
 	if err != nil {
 		t.Fatalf("unable to add stream: %+v", err)
 	}
-	return js
+	return nc, js
 }
 
-func cleanup(t *testing.T, s *server.Server) func() {
+func cleanup(t *testing.T, nc *nats.Conn, s *server.Server) func() {
 	return func() {
 		t.Helper()
+		nc.Close()
 		s.Shutdown()
 		if config := s.JetStreamConfig(); config != nil {
 			if err := os.RemoveAll(config.StoreDir); err != nil {
@@ -56,9 +57,8 @@ func cleanup(t *testing.T, s *server.Server) func() {
 
 func TestJetStreamProducer_SendMessages(t *testing.T) {
 	s := startServer(t)
-	t.Cleanup(cleanup(t, s))
-
-	js := connectServer(t, s.ClientURL())
+	nc, js := connectServer(t, s.ClientURL())
+	t.Cleanup(cleanup(t, nc, s))
 
 	tests := []struct {
 		name    string
@@ -85,7 +85,7 @@ func TestJetStreamProducer_SendMessages(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := sjs.NewJetStreamProducer(js, "")
+			p := sjs.NewJetStreamProducer(nc, js, "")
 			err := p.SendMessages(tt.msgs)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("SendMessages() error = %v, wantErr %v", err, tt.wantErr)
@@ -100,14 +100,15 @@ func TestJetStreamProducer_SendMessages(t *testing.T) {
 
 func TestJetStreamProducer_SendMessage(t *testing.T) {
 	s := startServer(t)
-	t.Cleanup(cleanup(t, s))
-
-	js := connectServer(t, s.ClientURL())
+	nc, js := connectServer(t, s.ClientURL())
+	t.Cleanup(cleanup(t, nc, s))
 
 	i, err := js.StreamInfo("test")
 	if err != nil {
 		t.Fatalf("unable to get stream info: %+v", err)
 	}
+
+	p := sjs.NewJetStreamProducer(nc, js, "")
 
 	tests := []struct {
 		name          string
@@ -137,7 +138,6 @@ func TestJetStreamProducer_SendMessage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := sjs.NewJetStreamProducer(js, "")
 			gotPartition, gotOffset, err := p.SendMessage(tt.msg)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("SendMessage() error = %v, wantErr %v", err, tt.wantErr)
@@ -149,9 +149,9 @@ func TestJetStreamProducer_SendMessage(t *testing.T) {
 			if gotOffset != tt.wantOffset {
 				t.Fatalf("SendMessage() gotOffset = %v, want %v", gotOffset, tt.wantOffset)
 			}
-			if err := p.Close(); err != nil {
-				t.Error(err)
-			}
 		})
+	}
+	if err := p.Close(); err != nil {
+		t.Error(err)
 	}
 }

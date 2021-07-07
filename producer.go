@@ -15,13 +15,15 @@ var _ sarama.SyncProducer = (*JetStreamProducer)(nil)
 
 // JetStreamProducer implements sarama.SyncProducer
 type JetStreamProducer struct {
+	nats        *nats.Conn
 	js          nats.JetStreamContext
 	stripPrefix string
 }
 
 // NewJetStreamProducer returns a sarama.SyncProducer
-func NewJetStreamProducer(js nats.JetStreamContext, stripPrefix string) sarama.SyncProducer {
+func NewJetStreamProducer(nc *nats.Conn, js nats.JetStreamContext, stripPrefix string) sarama.SyncProducer {
 	return &JetStreamProducer{
+		nats:        nc,
 		js:          js,
 		stripPrefix: stripPrefix,
 	}
@@ -79,6 +81,9 @@ func (p *JetStreamProducer) SendMessages(msgs []*sarama.ProducerMessage) error {
 
 // Close implements sarama.SyncProducer
 func (p *JetStreamProducer) Close() error {
+	if p.nats.IsConnected() {
+		p.nats.Close()
+	}
 	return nil
 }
 

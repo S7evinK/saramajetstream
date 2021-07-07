@@ -11,11 +11,10 @@ import (
 
 func TestJetStreamConsumer_Topics(t *testing.T) {
 	s := startServer(t)
-	t.Cleanup(cleanup(t, s))
+	nc, js := connectServer(t, s.ClientURL())
+	t.Cleanup(cleanup(t, nc, s))
 
-	js := connectServer(t, s.ClientURL())
-
-	consumer := sjs.NewJetStreamConsumer(js, "")
+	consumer := sjs.NewJetStreamConsumer(nc, js, "")
 	if consumer == nil {
 		t.Fatalf("expected consumer to be not nil")
 	}
@@ -36,11 +35,10 @@ func TestJetStreamConsumer_Topics(t *testing.T) {
 
 func TestJetStreamConsumer_Partitions(t *testing.T) {
 	s := startServer(t)
-	t.Cleanup(cleanup(t, s))
+	nc, js := connectServer(t, s.ClientURL())
+	t.Cleanup(cleanup(t, nc, s))
 
-	js := connectServer(t, s.ClientURL())
-
-	consumer := sjs.NewJetStreamConsumer(js, "")
+	consumer := sjs.NewJetStreamConsumer(nc, js, "")
 	if consumer == nil {
 		t.Fatalf("expected consumer to be not nil")
 	}
@@ -61,11 +59,10 @@ func TestJetStreamConsumer_Partitions(t *testing.T) {
 
 func TestJetStreamConsumer_HighWaterMarks(t *testing.T) {
 	s := startServer(t)
-	t.Cleanup(cleanup(t, s))
+	nc, js := connectServer(t, s.ClientURL())
+	t.Cleanup(cleanup(t, nc, s))
 
-	js := connectServer(t, s.ClientURL())
-
-	consumer := sjs.NewJetStreamConsumer(js, "")
+	consumer := sjs.NewJetStreamConsumer(nc, js, "")
 	if consumer == nil {
 		t.Fatalf("expected consumer to be not nil")
 	}
@@ -95,15 +92,14 @@ func TestJetStreamConsumer_HighWaterMarks(t *testing.T) {
 
 func TestJetStreamConsumer_PartitionConsumer(t *testing.T) {
 	s := startServer(t)
-	t.Cleanup(cleanup(t, s))
+	nc, js := connectServer(t, s.ClientURL())
+	t.Cleanup(cleanup(t, nc, s))
 
-	js := connectServer(t, s.ClientURL())
-
-	consumer := sjs.NewJetStreamConsumer(js, "")
+	consumer := sjs.NewJetStreamConsumer(nc, js, "")
 	if consumer == nil {
 		t.Fatalf("expected consumer to be not nil")
 	}
-	producer := sjs.NewJetStreamProducer(js, "")
+	producer := sjs.NewJetStreamProducer(nc, js, "")
 
 	hwm := consumer.HighWaterMarks()
 
@@ -119,7 +115,9 @@ func TestJetStreamConsumer_PartitionConsumer(t *testing.T) {
 	}()
 
 	t.Cleanup(func() {
-		pc.AsyncClose()
+		if errs := pc.Close(); errs != nil {
+			t.Fatalf("errors after closing: %+v", errs)
+		}
 	})
 
 	pcHwm := pc.HighWaterMarkOffset()
@@ -149,11 +147,10 @@ func TestJetStreamConsumer_PartitionConsumer(t *testing.T) {
 
 func TestJetStreamConsumer_Close(t *testing.T) {
 	s := startServer(t)
-	t.Cleanup(cleanup(t, s))
+	nc, js := connectServer(t, s.ClientURL())
+	t.Cleanup(cleanup(t, nc, s))
 
-	js := connectServer(t, s.ClientURL())
-
-	consumer := sjs.NewJetStreamConsumer(js, "")
+	consumer := sjs.NewJetStreamConsumer(nc, js, "")
 	if consumer == nil {
 		t.Fatalf("expected consumer to be not nil")
 	}

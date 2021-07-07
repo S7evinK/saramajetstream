@@ -3,6 +3,7 @@ package saramajetstream
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/Shopify/sarama"
 	"github.com/nats-io/nats.go"
@@ -17,13 +18,15 @@ var _ sarama.PartitionConsumer = (*partitionConsumer)(nil)
 // JetStreamConsumer implements sarama.Consumer
 type JetStreamConsumer struct {
 	js                 nats.JetStreamContext
+	nats               *nats.Conn
 	stripPrefix        string
 	partitionConsumers []*partitionConsumer
 }
 
 // NewJetStreamConsumer returns a sarama.Consumer
-func NewJetStreamConsumer(js nats.JetStreamContext, stripPrefix string) sarama.Consumer {
+func NewJetStreamConsumer(nc *nats.Conn, js nats.JetStreamContext, stripPrefix string) sarama.Consumer {
 	return &JetStreamConsumer{
+		nats:        nc,
 		js:          js,
 		stripPrefix: stripPrefix,
 	}
@@ -52,6 +55,7 @@ func (c *JetStreamConsumer) ConsumePartition(topic string, partition int32, offs
 		subject:  strings.TrimPrefix(topic, c.stripPrefix),
 		messages: make(chan *sarama.ConsumerMessage),
 		errors:   make(chan *sarama.ConsumerError),
+		once:     &sync.Once{},
 	}
 
 	c.partitionConsumers = append(c.partitionConsumers, pc)
@@ -106,10 +110,8 @@ func (c *JetStreamConsumer) HighWaterMarks() map[string]map[int32]int64 {
 
 // Close implements sarama.Consumer
 func (c *JetStreamConsumer) Close() error {
-	for _, pc := range c.partitionConsumers {
-		if err := pc.Close(); err != nil {
-			return err
-		}
+	if c.nats.IsConnected() {
+		c.nats.Close()
 	}
 	return nil
 }
@@ -119,18 +121,30 @@ type partitionConsumer struct {
 	sub      *nats.Subscription
 	messages chan *sarama.ConsumerMessage
 	errors   chan *sarama.ConsumerError
+	once     *sync.Once
 }
 
 // AsyncClose implements sarama.PartitionConsumer
 func (pc *partitionConsumer) AsyncClose() {
-	_ = pc.Close()
+	pc.once.Do(func() {
+		_ = pc.sub.Drain()
+		close(pc.errors)
+		close(pc.messages)
+	})
 }
 
 // Close implements sarama.PartitionConsumer
 func (pc *partitionConsumer) Close() error {
-	close(pc.errors)
-	close(pc.messages)
-	return pc.sub.Unsubscribe()
+	pc.AsyncClose()
+	var errs sarama.ConsumerErrors
+	for err := range pc.errors {
+		errs = append(errs, err)
+	}
+
+	if len(errs) > 0 {
+		return errs
+	}
+	return nil
 }
 
 // Messages implements sarama.PartitionConsumer
