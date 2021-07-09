@@ -1,6 +1,7 @@
 package saramajetstream_test
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -14,20 +15,21 @@ import (
 func startServer(t *testing.T) *server.Server {
 	t.Helper()
 	opts := &natsserver.DefaultTestOptions
+	opts.Port = -1
 	opts.JetStream = true
 	return natsserver.RunServer(opts)
 }
 
-func connectServer(t *testing.T) nats.JetStreamContext {
+func connectServer(t *testing.T, url string) (*nats.Conn, nats.JetStreamContext) {
 	t.Helper()
-	nc, err := nats.Connect(nats.DefaultURL)
+	nc, err := nats.Connect(url)
 	if err != nil {
-		t.Errorf("unable to connect to nats: %+v", err)
+		t.Fatalf("unable to connect to nats: %+v", err)
 	}
 
 	js, err := nc.JetStream()
 	if err != nil {
-		t.Errorf("unable to get JetStream context: %+v", err)
+		t.Fatalf("unable to get JetStream context: %+v", err)
 	}
 
 	_, err = js.AddStream(&nats.StreamConfig{
@@ -35,15 +37,28 @@ func connectServer(t *testing.T) nats.JetStreamContext {
 		Subjects: []string{"*"},
 	})
 	if err != nil {
-		t.Errorf("unable to add stream: %+v", err)
+		t.Fatalf("unable to add stream: %+v", err)
 	}
-	return js
+	return nc, js
+}
+
+func cleanup(t *testing.T, nc *nats.Conn, s *server.Server) func() {
+	return func() {
+		t.Helper()
+		nc.Close()
+		s.Shutdown()
+		if config := s.JetStreamConfig(); config != nil {
+			if err := os.RemoveAll(config.StoreDir); err != nil {
+				t.Fatal("unable to cleanup StoreDir", config.StoreDir)
+			}
+		}
+	}
 }
 
 func TestJetStreamProducer_SendMessages(t *testing.T) {
 	s := startServer(t)
-	defer s.Shutdown()
-	js := connectServer(t)
+	nc, js := connectServer(t, s.ClientURL())
+	t.Cleanup(cleanup(t, nc, s))
 
 	tests := []struct {
 		name    string
@@ -54,11 +69,13 @@ func TestJetStreamProducer_SendMessages(t *testing.T) {
 			name: "send multiple messages",
 			msgs: []*sarama.ProducerMessage{
 				{
+					Key:       sarama.StringEncoder("test"),
 					Topic:     "test",
 					Value:     sarama.StringEncoder("hello world"),
 					Timestamp: time.Now(),
 				},
 				{
+					Key:       sarama.StringEncoder("test"),
 					Topic:     "test1",
 					Value:     sarama.StringEncoder("hello world2"),
 					Timestamp: time.Now(),
@@ -68,10 +85,10 @@ func TestJetStreamProducer_SendMessages(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := sjs.NewJetStreamProducer(js, "")
+			p := sjs.NewJetStreamProducer(nc, js, "")
 			err := p.SendMessages(tt.msgs)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("SendMessages() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("SendMessages() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if err := p.Close(); err != nil {
@@ -81,25 +98,17 @@ func TestJetStreamProducer_SendMessages(t *testing.T) {
 	}
 }
 
-type dummyEncoder string
-
-func (s dummyEncoder) Encode() ([]byte, error) {
-	return []byte(s), nil
-}
-
-func (s dummyEncoder) Length() int {
-	return len(s)
-}
-
 func TestJetStreamProducer_SendMessage(t *testing.T) {
 	s := startServer(t)
-	defer s.Shutdown()
-	js := connectServer(t)
+	nc, js := connectServer(t, s.ClientURL())
+	t.Cleanup(cleanup(t, nc, s))
 
 	i, err := js.StreamInfo("test")
 	if err != nil {
-		t.Errorf("unable to get stream info: %+v", err)
+		t.Fatalf("unable to get stream info: %+v", err)
 	}
+
+	p := sjs.NewJetStreamProducer(nc, js, "")
 
 	tests := []struct {
 		name          string
@@ -111,6 +120,7 @@ func TestJetStreamProducer_SendMessage(t *testing.T) {
 		{
 			name: "string message",
 			msg: &sarama.ProducerMessage{
+				Key:   sarama.StringEncoder("test"),
 				Topic: "test",
 				Value: sarama.StringEncoder("hello world"),
 			},
@@ -119,38 +129,29 @@ func TestJetStreamProducer_SendMessage(t *testing.T) {
 		{
 			name: "byte message",
 			msg: &sarama.ProducerMessage{
+				Key:   sarama.StringEncoder("test"),
 				Topic: "test",
 				Value: sarama.ByteEncoder("hello world"),
 			},
 			wantOffset: int64(i.State.LastSeq + 2),
 		},
-		{
-			name: "unknown encoder",
-			msg: &sarama.ProducerMessage{
-				Topic: "test",
-				Value: dummyEncoder("testing"),
-			},
-			wantErr:    true,
-			wantOffset: -1,
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := sjs.NewJetStreamProducer(js, "")
 			gotPartition, gotOffset, err := p.SendMessage(tt.msg)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("SendMessage() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("SendMessage() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if gotPartition != tt.wantPartition {
-				t.Errorf("SendMessage() gotPartition = %v, want %v", gotPartition, tt.wantPartition)
+				t.Fatalf("SendMessage() gotPartition = %v, want %v", gotPartition, tt.wantPartition)
 			}
 			if gotOffset != tt.wantOffset {
-				t.Errorf("SendMessage() gotOffset = %v, want %v", gotOffset, tt.wantOffset)
-			}
-			if err := p.Close(); err != nil {
-				t.Error(err)
+				t.Fatalf("SendMessage() gotOffset = %v, want %v", gotOffset, tt.wantOffset)
 			}
 		})
+	}
+	if err := p.Close(); err != nil {
+		t.Error(err)
 	}
 }

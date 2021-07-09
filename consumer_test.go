@@ -11,62 +11,65 @@ import (
 
 func TestJetStreamConsumer_Topics(t *testing.T) {
 	s := startServer(t)
-	defer s.Shutdown()
-	js := connectServer(t)
-	consumer := sjs.NewJetStreamConsumer(js, "")
+	nc, js := connectServer(t, s.ClientURL())
+	t.Cleanup(cleanup(t, nc, s))
+
+	consumer := sjs.NewJetStreamConsumer(nc, js, "")
 	if consumer == nil {
-		t.Errorf("expected consumer to be not nil")
+		t.Fatalf("expected consumer to be not nil")
 	}
 
 	topics, err := consumer.Topics()
 	if err != nil {
-		t.Errorf("expected no error")
+		t.Fatalf("expected no error")
 	}
 
 	if len(topics) == 0 {
-		t.Errorf("expected some topics, but got 0")
+		t.Fatalf("expected some topics, but got 0")
 	}
 	t.Logf("Topics: %+v", topics)
 	if err := consumer.Close(); err != nil {
-		t.Errorf("failed to close consumer: %+v", err)
+		t.Fatalf("failed to close consumer: %+v", err)
 	}
 }
 
 func TestJetStreamConsumer_Partitions(t *testing.T) {
 	s := startServer(t)
-	defer s.Shutdown()
-	js := connectServer(t)
-	consumer := sjs.NewJetStreamConsumer(js, "")
+	nc, js := connectServer(t, s.ClientURL())
+	t.Cleanup(cleanup(t, nc, s))
+
+	consumer := sjs.NewJetStreamConsumer(nc, js, "")
 	if consumer == nil {
-		t.Errorf("expected consumer to be not nil")
+		t.Fatalf("expected consumer to be not nil")
 	}
 
 	partitions, err := consumer.Partitions("test")
 	if err != nil {
-		t.Errorf("expected no error")
+		t.Fatalf("expected no error")
 	}
 
 	if len(partitions) == 0 {
-		t.Errorf("expected some partitions, but got 0")
+		t.Fatalf("expected some partitions, but got 0")
 	}
 	t.Logf("Partitions: %+v", partitions)
 	if err := consumer.Close(); err != nil {
-		t.Errorf("failed to close consumer: %+v", err)
+		t.Fatalf("failed to close consumer: %+v", err)
 	}
 }
 
 func TestJetStreamConsumer_HighWaterMarks(t *testing.T) {
 	s := startServer(t)
-	defer s.Shutdown()
-	js := connectServer(t)
-	consumer := sjs.NewJetStreamConsumer(js, "")
+	nc, js := connectServer(t, s.ClientURL())
+	t.Cleanup(cleanup(t, nc, s))
+
+	consumer := sjs.NewJetStreamConsumer(nc, js, "")
 	if consumer == nil {
-		t.Errorf("expected consumer to be not nil")
+		t.Fatalf("expected consumer to be not nil")
 	}
 
 	info, err := js.StreamInfo("test")
 	if err != nil {
-		t.Errorf("unable to get stream info: %+v", err)
+		t.Fatalf("unable to get stream info: %+v", err)
 	}
 
 	want := map[string]map[int32]int64{
@@ -76,30 +79,50 @@ func TestJetStreamConsumer_HighWaterMarks(t *testing.T) {
 	got := consumer.HighWaterMarks()
 
 	if len(got) == 0 {
-		t.Errorf("expected some watermarks, but got 0")
+		t.Fatalf("expected some watermarks, but got 0")
 	}
 	t.Logf("HighWaterMarks: %+v", got)
 	if err := consumer.Close(); err != nil {
-		t.Errorf("failed to close consumer: %+v", err)
+		t.Fatalf("failed to close consumer: %+v", err)
 	}
 	if !reflect.DeepEqual(want, got) {
-		t.Errorf(`expected "%+v", but got "%+v"`, want, got)
+		t.Fatalf(`expected "%+v", but got "%+v"`, want, got)
 	}
 }
 
 func TestJetStreamConsumer_PartitionConsumer(t *testing.T) {
 	s := startServer(t)
-	defer s.Shutdown()
-	js := connectServer(t)
-	consumer := sjs.NewJetStreamConsumer(js, "")
-	if consumer == nil {
-		t.Errorf("expected consumer to be not nil")
-	}
-	producer := sjs.NewJetStreamProducer(js, "")
+	nc, js := connectServer(t, s.ClientURL())
+	t.Cleanup(cleanup(t, nc, s))
 
-	pc, err := consumer.ConsumePartition("test", 0, sarama.OffsetNewest)
+	consumer := sjs.NewJetStreamConsumer(nc, js, "")
+	if consumer == nil {
+		t.Fatalf("expected consumer to be not nil")
+	}
+	producer := sjs.NewJetStreamProducer(nc, js, "")
+
+	hwm := consumer.HighWaterMarks()
+
+	pc, err := consumer.ConsumePartition("test", 0, hwm["test"][0])
 	if err != nil {
-		t.Errorf("unable to consume partition: %+v", err)
+		t.Fatalf("unable to consume partition: %+v", err)
+	}
+	go func() {
+		if pcErr := <-pc.Errors(); pcErr != nil {
+			t.Errorf("unexpected error: %+v", pcErr)
+			return
+		}
+	}()
+
+	t.Cleanup(func() {
+		if errs := pc.Close(); errs != nil {
+			t.Fatalf("errors after closing: %+v", errs)
+		}
+	})
+
+	pcHwm := pc.HighWaterMarkOffset()
+	if pcHwm != hwm["test"][0] {
+		t.Fatalf("expected PartitionConsumer HighWaterMarkOffset (%d) to equal HighWatermarks (%d)", pcHwm, hwm["test"][0])
 	}
 
 	_, offset, err := producer.SendMessage(&sarama.ProducerMessage{
@@ -108,7 +131,7 @@ func TestJetStreamConsumer_PartitionConsumer(t *testing.T) {
 		Value:     sarama.StringEncoder("hello world"),
 	})
 	if err != nil {
-		t.Errorf("unable to send message: %+v", err)
+		t.Fatalf("unable to send message: %+v", err)
 	}
 
 	msg := <-pc.Messages()
@@ -117,12 +140,28 @@ func TestJetStreamConsumer_PartitionConsumer(t *testing.T) {
 		t.Fatalf(`expected message to be "%s" but got "%s"`, want, msg.Value)
 	}
 
-	// TODO: Fix failing test
-	if msg.Offset != offset {
+	if msg.Offset != offset || msg.Offset != hwm["test"][0] {
 		t.Fatalf("unexpected offset, got %d, want %d", msg.Offset, offset)
 	}
+}
 
-	if err := pc.Close(); err != nil {
-		t.Errorf("unable to close PartitionConsumer: %+v", err)
+func TestJetStreamConsumer_Close(t *testing.T) {
+	s := startServer(t)
+	nc, js := connectServer(t, s.ClientURL())
+	t.Cleanup(cleanup(t, nc, s))
+
+	consumer := sjs.NewJetStreamConsumer(nc, js, "")
+	if consumer == nil {
+		t.Fatalf("expected consumer to be not nil")
 	}
+
+	_, err := consumer.ConsumePartition("test", 0, sarama.OffsetNewest)
+	if err != nil {
+		t.Fatalf("unable to consume partition: %+v", err)
+	}
+	t.Cleanup(func() {
+		if err := consumer.Close(); err != nil {
+			t.Fatalf("unable to close consumer: %+v", err)
+		}
+	})
 }

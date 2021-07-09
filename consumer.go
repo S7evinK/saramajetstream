@@ -1,7 +1,9 @@
 package saramajetstream
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/Shopify/sarama"
 	"github.com/nats-io/nats.go"
@@ -16,38 +18,70 @@ var _ sarama.PartitionConsumer = (*partitionConsumer)(nil)
 // JetStreamConsumer implements sarama.Consumer
 type JetStreamConsumer struct {
 	js          nats.JetStreamContext
+	nats        *nats.Conn
 	stripPrefix string
 }
 
+// channelSize defines the buffer size for the messages/errors channels
+const channelSize = 1024
+
 // NewJetStreamConsumer returns a sarama.Consumer
-func NewJetStreamConsumer(js nats.JetStreamContext, stripPrefix string) sarama.Consumer {
+func NewJetStreamConsumer(nc *nats.Conn, js nats.JetStreamContext, stripPrefix string) sarama.Consumer {
 	return &JetStreamConsumer{
+		nats:        nc,
 		js:          js,
 		stripPrefix: stripPrefix,
 	}
 }
 
 // ConsumePartition implements sarama.Consumer
-func (c JetStreamConsumer) ConsumePartition(topic string, partition int32, offset int64) (sarama.PartitionConsumer, error) {
-	var opt nats.SubOpt
+func (c *JetStreamConsumer) ConsumePartition(topic string, partition int32, offset int64) (sarama.PartitionConsumer, error) {
+	if partition != 0 {
+		return nil, fmt.Errorf("unknown partition %d", partition)
+	}
 
+	var opt nats.SubOpt
 	switch offset {
 	case sarama.OffsetNewest:
 		opt = nats.DeliverNew()
 	case sarama.OffsetOldest:
 		opt = nats.DeliverAll()
 	default:
+		if offset <= 0 {
+			return nil, fmt.Errorf("offset should be greater 0")
+		}
 		opt = nats.StartSequence(uint64(offset))
 	}
 
-	return &partitionConsumer{
-		subject:     strings.TrimPrefix(topic, c.stripPrefix),
-		stripPrefix: c.stripPrefix,
-		js:          c.js,
-		subOpt:      opt,
-		messages:    make(chan *sarama.ConsumerMessage),
-		errors:      make(chan *sarama.ConsumerError),
-	}, nil
+	pc := &partitionConsumer{
+		subject:  strings.TrimPrefix(topic, c.stripPrefix),
+		messages: make(chan *sarama.ConsumerMessage, channelSize),
+		errors:   make(chan *sarama.ConsumerError, channelSize),
+		once:     &sync.Once{},
+	}
+
+	var err error
+	pc.sub, err = c.js.Subscribe(pc.subject, func(msg *nats.Msg) {
+		meta, merr := msg.Metadata()
+		if merr != nil {
+			pc.errors <- &sarama.ConsumerError{
+				Err:   merr,
+				Topic: pc.subject,
+			}
+			return
+		}
+		pc.messages <- &sarama.ConsumerMessage{
+			Headers:        toSaramaRecordHeader(msg.Header),
+			Timestamp:      meta.Timestamp,
+			BlockTimestamp: meta.Timestamp,
+			Key:            []byte(msg.Header.Get(MsgHeaderKey)),
+			Value:          msg.Data,
+			Topic:          pc.subject,
+			Partition:      0,
+			Offset:         int64(meta.Sequence.Stream),
+		}
+	}, opt)
+	return pc, err
 }
 
 // Topics implements sarama.Consumer
@@ -76,60 +110,45 @@ func (c *JetStreamConsumer) HighWaterMarks() map[string]map[int32]int64 {
 
 // Close implements sarama.Consumer
 func (c *JetStreamConsumer) Close() error {
+	if c.nats.IsConnected() {
+		c.nats.Close()
+	}
 	return nil
 }
 
 type partitionConsumer struct {
-	subject     string
-	stripPrefix string
-	js          nats.JetStreamContext
-	sub         *nats.Subscription
-	subOpt      nats.SubOpt
-	messages    chan *sarama.ConsumerMessage
-	errors      chan *sarama.ConsumerError
+	subject  string
+	sub      *nats.Subscription
+	messages chan *sarama.ConsumerMessage
+	errors   chan *sarama.ConsumerError
+	once     *sync.Once
 }
 
 // AsyncClose implements sarama.PartitionConsumer
 func (pc *partitionConsumer) AsyncClose() {
-	_ = pc.Close()
+	pc.once.Do(func() {
+		_ = pc.sub.Drain()
+		close(pc.errors)
+		close(pc.messages)
+	})
 }
 
 // Close implements sarama.PartitionConsumer
 func (pc *partitionConsumer) Close() error {
-	close(pc.errors)
-	close(pc.messages)
-	return pc.sub.Unsubscribe()
+	pc.AsyncClose()
+	var errs sarama.ConsumerErrors
+	for err := range pc.errors {
+		errs = append(errs, err)
+	}
+
+	if len(errs) > 0 {
+		return errs
+	}
+	return nil
 }
 
 // Messages implements sarama.PartitionConsumer
 func (pc *partitionConsumer) Messages() <-chan *sarama.ConsumerMessage {
-	var err error
-	pc.sub, err = pc.js.Subscribe(pc.subject, func(msg *nats.Msg) {
-		meta, err := msg.Metadata()
-		if err != nil {
-			pc.errors <- &sarama.ConsumerError{
-				Err:   err,
-				Topic: pc.subject,
-			}
-			return
-		}
-		pc.messages <- &sarama.ConsumerMessage{
-			Timestamp:      meta.Timestamp,
-			BlockTimestamp: meta.Timestamp,
-			Key:            []byte{},
-			Value:          msg.Data,
-			Topic:          pc.subject,
-			Partition:      0,
-			Offset:         int64(meta.Sequence.Consumer),
-		}
-	}, nats.Durable(pc.subject), pc.subOpt)
-	if err != nil {
-		pc.errors <- &sarama.ConsumerError{
-			Err:   err,
-			Topic: pc.subject,
-		}
-	}
-
 	return pc.messages
 }
 
@@ -140,9 +159,9 @@ func (pc *partitionConsumer) Errors() <-chan *sarama.ConsumerError {
 
 // HighWaterMarkOffset implements sarama.PartitionConsumer
 func (pc *partitionConsumer) HighWaterMarkOffset() int64 {
-	i, err := pc.js.StreamInfo(pc.stripPrefix + pc.subject)
+	ci, err := pc.sub.ConsumerInfo()
 	if err != nil {
 		return 1
 	}
-	return int64(i.State.LastSeq + 1)
+	return int64(ci.Delivered.Stream + 1)
 }
